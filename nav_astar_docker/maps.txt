@@ -1,0 +1,9 @@
+# 打包进镜像的地图包（相对 slam_map_demo/maps/），每行一个；改动后重新运行 ./build.sh
+# 第一行为默认地图（容器不指定 NAV_MAP 时加载）
+room1110/2026-11-11.2
+go2_room_selfbuilt/2026-11-09.2
+r2b_storage_ns/2026-11-01.3
+go2_room_onboard/2026-11-05.1
+r2b_storage/2026-10-28.2
+hilti_exp14/2026-10-28.2
+habitat_apartment_1/2026-10-27.1
