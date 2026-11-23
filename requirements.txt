@@ -1,5 +1,5 @@
--r requirements-mcp.txt
+mcp>=1.23,<2
 numpy==2.2.6
-scipy==1.15.3
+pydantic>=2,<3
 PyYAML==6.0.3
-websockets==16.1.1
+scipy==1.15.3

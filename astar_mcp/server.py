@@ -1,27 +1,40 @@
 # Copyright 2026 The RPent Authors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Expose the existing A* HTTP service through a Streamable HTTP MCP endpoint."""
+"""Serve the local A* planner over Streamable HTTP MCP."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from .navigation_client import (
-    CoordinateGoal,
-    NavigationClient,
-    NavigationGoal,
-)
+from pydantic import BaseModel, ConfigDict
+
+from slam_map_demo.scripts.nav_service import Planner
 
 
-def create_astar_mcp(navigation: NavigationClient, *, host: str, port: int) -> FastMCP:
-    """Build an MCP server backed by an existing navigation client."""
+class CoordinateGoal(BaseModel):
+    """A map-frame goal in meters, with an optional final yaw in radians."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+
+    x: float
+    y: float
+    yaw: float | None = None
+
+
+NavigationGoal = str | CoordinateGoal
+
+
+def create_astar_mcp(planner: Planner, *, host: str, port: int) -> FastMCP:
+    """Expose waypoints and saved routes from the configured map."""
     server = FastMCP(
         "unitree-navigation",
         host=host,
@@ -33,15 +46,21 @@ def create_astar_mcp(navigation: NavigationClient, *, host: str, port: int) -> F
     plans: dict[str, dict[str, Any]] = {}
 
     @server.tool(annotations=readonly)
-    async def list_waypoints() -> dict[str, Any]:
+    def list_waypoints() -> dict[str, Any]:
         """List the map's named destinations and standing poses."""
-        return await asyncio.to_thread(navigation.list_waypoints)
+        return {
+            "ok": True,
+            "map_id": planner.map_id,
+            "map_version": planner.map_version,
+            "waypoints": planner.waypoint_list(),
+        }
 
     @server.tool(annotations=readonly)
     async def plan_route(start: CoordinateGoal, goal: NavigationGoal) -> dict[str, Any]:
         """Plan to one target from the fresh simulator x, y and yaw and return a plan_id for follow_plan."""
+        target = goal.model_dump(exclude_none=True) if isinstance(goal, CoordinateGoal) else goal
         route = await asyncio.to_thread(
-            navigation.plan, start.model_dump(exclude_none=True), [goal]
+            planner.plan, start.model_dump(exclude_none=True), [target]
         )
         plan_id = f"plan_{uuid4().hex}"
         plans[plan_id] = route
@@ -71,16 +90,14 @@ def create_astar_mcp(navigation: NavigationClient, *, host: str, port: int) -> F
 def main() -> None:
     """Serve the configured A* planner over MCP."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--nav-endpoint", default="http://127.0.0.1:8765")
+    parser.add_argument("--map", default=os.environ.get("ROBOT_MAP", "room1110/2026-11-11.2"),
+                        help="map/version under slam_map_demo/maps, or an absolute map directory")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8790)
     args = parser.parse_args()
-    navigation = NavigationClient(args.nav_endpoint)
-    try:
-        server = create_astar_mcp(navigation, host=args.host, port=args.port)
-        server.run(transport="streamable-http")
-    finally:
-        navigation.close()
+    maps = Path(__file__).resolve().parents[1] / "slam_map_demo/maps"
+    planner = Planner(maps / args.map)
+    create_astar_mcp(planner, host=args.host, port=args.port).run(transport="streamable-http")
 
 
 if __name__ == "__main__":
